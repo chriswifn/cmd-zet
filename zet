@@ -5,10 +5,16 @@ set -e
 
 (( BASH_VERSINFO[0] < 4 )) && echo "Bash 4+ required." && exit 1
 
-: "${PAGER:=more}"
-: "${EDITOR:=vi}"
+: "${PAGER:=less}"
+: "${EDITOR:=vim}"
 : "${HELP_BROWSER:=}"
 : "${EXE:="${0##*/}"}"
+: "${GITUSER:=chriswifn}"
+: "${GITBRANCH:=main}"
+: "${GHREPOS:="$HOME/repos/github.com/$GITUSER"}"
+: "${PRIVATE:="$HOME/private"}"
+: "${PICTURES:="$HOME/Pictures/screenshots"}"
+: "${DOWNLOADS:="$HOME/Downloads"}"
 
 declare -A HELP
 declare -A CONF
@@ -24,7 +30,16 @@ declare white="\e[37m"
 declare reset="\e[0m"
 
 _initialize() {
-  : # put initialization code here
+  : "${CONF[zet.private]:="$PRIVATE/zet"}"
+  : "${CONF[zet.public]:="$GHREPOS/zet"}"
+  : "${CONF[current]:=public}"
+  : "${CONF[download.directory]:="$DOWNLOADS"}"
+  : "${CONF[screenshot.directory]:="$PICTURES"}"
+  : "${CONF[editor]:="$EDITOR"}"
+  : "${CONF[category.figure]:="FIGURE"}"
+  : "${CONF[category.todo]:="TODO"}"
+  : "${CONF[category.university]:="UNI"}"
+  x.config.write
 }
 
 _alternatives() {
@@ -72,7 +87,7 @@ A number of builtin and frequently used utility functions have been
 included for convenience. These save developers from adding other
 moronic things like `sed` and `awk` subprocesses. Obviously, not all of
 this is needed for many Bash scripts. Just remove what you do not need
-or want. 
+or want.
 
 ### `_initialize`
 
@@ -92,7 +107,7 @@ alternatives and intelligent sensing of what command function is wanted
 by simply examining the argument list. This can be useful when you wish
 to provide shortcuts for longer commands but do not want to clutter the
 command usage and completion list. For example, `zet dex.titles` could
-be trapped in `_alternatives` to call `zet titles`. 
+be trapped in `_alternatives` to call `zet titles`.
 
 ### `_have`
 
@@ -172,7 +187,7 @@ more powerful, safer, flexible, and performant than POSIX shell or Zsh.
 * Write GitHub Flavored Markdown only
 * Use present tense ("outputs" over "will output")
 * Prefer term "output" and "display" over ~~print~~
-* Follow the [naming conventions](#naming-conventions) 
+* Follow the [naming conventions](#naming-conventions)
 * Use the official bash path: `#!/bin/bash`
 * Use of `#!/usr/bin/bash` is outdated
 * Using `#!/usr/bin/env bash` introduces unnecessary risk
@@ -190,8 +205,8 @@ untrusted user has been done.
 
 ## Legal
 
-Copyright 2021 Rob Muhlestein <rob@rwx.gg>  
-Released under Apache-2.0 License  
+Copyright 2021 Rob Muhlestein <rob@rwx.gg>
+Released under Apache-2.0 License
 Please mention rwxrob.tv'
 
 HELP[foo]='Foos things.'
@@ -214,10 +229,195 @@ x.bar() {
   echo "would bar: $*"
 }
 
+x.count() { mapfile ids < <(x.ids); echo "${#ids[@]}"; }
+
+x.categories() {
+  for id in "${!CONF[@]}"; do
+    [[ ${id:0:8} = category ]] || continue
+    echo "$id=${CONF[$id]}"
+  done
+}
+
+x.category() {
+  [[ -z "$1" ]] && return 1
+  local expr="${CONF[category.$1]}"
+  x.dex.titles | pcregrep -i "$expr"
+}
+
+x.todos() { x.category todo;}
+x.zet.private() { x.config zet.private "$@"; }
+x.zet.public() { x.config zet.public "$@"; }
+x.current() { x.config current "$@"; }
+
 HELP[some.config.setting]='Get and set `some.config.setting`.'
 
 x.some.config.setting() {
   x.config some.config.setting "$@"
+}
+
+x.isosec() { date -u +%Y%m%d%H%M%S "$@"; }
+
+x.dir() {
+  local dir="${CONF[zet."${CONF[current]}"]}"
+  [[ -d "$dir" ]] && echo "$dir"
+}
+
+x.get() {
+  local zetid dir last arg="$*"
+  if [[ $arg =~ ^[0-9]{14,}$ ]]; then
+    echo "$(x.dir)/$1"
+  elif [[ $arg = last ]]; then
+    last="$(x.last)"
+    [[ -n "$last" ]] && echo "$(x.dir)/$last"
+  else
+    mapfile -t matches < <(x.find "$@")
+    (( ${#matches[@]} > 0 )) || return 1
+    if (( ${#matches[@]} == 1 )); then
+      echo "$(x.dir)/${matches[0]%% *}"
+      return
+    fi
+    select match in "${matches[@]}"; do
+      echo "$(x.dir)/${match%% *}"
+      return $?
+    done
+  fi
+}
+
+HELP[x.create]='Create a new zet'
+
+x.create() {
+  local title="$*"
+  local dir readme
+  dir="$(x.dir)/$(x.isosec)"
+  readme="$dir/README.md"
+  mkdir -p "$dir"
+  printf "# %s\n\n" "$title" > "$readme"
+  #iam writing "$title"
+  "${CONF[editor]}" "$readme"
+  cd "$dir" &>/dev/null
+  [[ -s "$dir/README.md" ]] || return 1
+#   line=$(head -1 "$dir/README.md" | sed 's/#\+ *//')
+#   test -n "$line"
+#   git pull -q
+#   echo "Committing: $line"
+#   git add -A "$dir" &>/dev/null
+#   git commit -m "$line" &>/dev/null
+#   git push &>/dev/null
+}
+
+x.edit() {
+  _checkdep "${CONF[editor]}"
+  local dir zetid editor="${CONF[editor]}"
+  dir=$(x.get "$@")
+  zetid=${dir##*/}
+  local readme="$dir/README.md"
+  [[ ! -r "$readme" ]] && echo "Not found." && return 1
+  #iam writing "$(x.title $zetid)"
+  "$editor" "$readme"
+#   read -r -p "Commit? " resp
+#   [[ $resp =~ ^[yY] ]] && x.commit "$zetid"
+}
+
+x.dex.titles() {
+ local dir title
+ dir=$(x.dir)
+ while IFS= read -u 7 -r d; do
+   local id=${d##*/}
+   [[ -r "$d/README.md" ]] || continue
+   IFS= read -r title < "$d/README.md" || true
+   [[ $title =~ ^#\  ]] || title="<untitled>"
+   title="${title#*# }"
+   echo "$id $title"
+ done 7< <(find "$dir" -maxdepth 2 -type d -path '*/2*'|sort)
+}
+
+x.find() { x.dex.titles | pcregrep -i "$*"; }
+x.tags.find() { x.dex.tags | pcregrep -i "$*"; }
+
+x.last() {
+  mapfile titles < <(x.dex.titles)
+  local last=${#titles[@]}
+  echo "${titles[$last-1]%% *}"
+}
+
+x.dex.tags() {
+  local dir buf ln=$'\n'
+  dir=$(x.dir)
+  while IFS= read -u 7 -r d; do
+    local id=${d##*/}
+    [[ -r "$d/README.md" ]] || continue
+    buf="$(<"$d/README.md")"
+    [[ $buf =~ $ln\ {4}# ]] || continue
+    buf=${buf##*    #}
+    echo "$id ${buf//#/}"
+  done 7< <(find "$dir" -maxdepth 2 -type d -path '*/2*'|sort)
+}
+
+x.tags() {
+  _filter "$@" && return $?
+  local id="${1%% *}"
+  [[ $id = last ]] && id=$(x.last)
+  local dir readme tags
+  dir="$(x.dir)/$id"
+  [[ -d $dir ]] || return 1
+  readme="$dir/README.md"
+  [[ -r $readme ]] || return 1
+  tag=$(tail -1 "$readme")
+  [[ $tag =~ ^\ {4,}(#.+) ]] || return 0
+  echo "${BASH_REMATCH[1]//#/}"
+}
+
+x.ids() {
+  while read -r line; do
+    echo "${line##*/}"
+  done < <(find "$(x.dir)" -maxdepth 2 -type d -path '*/2*' | sort)
+}
+
+x.link() { x.find "$*" | x.mark.link; }
+
+x.mark.link () {
+  _filter "$@" && return $?;
+  local id="${1%% *}"
+  local title="${1#* }"
+  [[ -z "$title" ]] && title=$(x.title "$1")
+  echo "* [$id](/$id/README.md) $title"
+}
+
+x.screenshot() {
+  local dir="${CONF[screenshot.directory]}"
+  printf "Take and save a screenshot to $dir. Then press enter."
+  read whatever
+  echo "$dir"
+  _add_figure "$(_newest "$dir")"
+}
+
+_add_figure() {
+  local name figure="$1"
+  [[ -x "$figure" ]] && echo "could not find figure to add" && return 1
+  name=$(_figure_name "$figure")
+  [[ $name =~ F([0-9]+) ]] && id="${BASH_REMATCH[1]}"
+  mkdir "/tmp/$id"
+  mv "$figure" "/tmp/$id/$name"
+  echo -e "#\n\n![${CONF[category.figure]}]($name)\n" > "/tmp/$id/README.md"
+  x.import "/tmp/$id" >/dev/null
+  x.edit "$id"
+}
+
+x.import() {
+    _filter "$@" && return $?
+    local dir
+    dir="$(x.dir)"
+    [[ ! -d "$1" ]] && return 1
+    mv "$1" "$dir"
+    echo "${1##*/}"
+}
+
+_figure_name() {
+  _checkdep identify || return 1
+  local file isosec
+  file=${1##*/}
+  isosec="$(date -u +%Y%m%d%H%M%S -r "$1")"
+  identify -format "F${isosec}-%G.%e" "$1"
 }
 
 ############################## BOILERPLATE ###########################
