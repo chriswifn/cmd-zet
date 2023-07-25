@@ -331,6 +331,19 @@ x.dex.titles() {
  done 7< <(find "$dir" -maxdepth 2 -type d -path '*/2*'|sort)
 }
 
+x.dex.paths() {
+ local dir title
+ dir=$(x.dir)
+ while IFS= read -u 7 -r d; do
+   local id=${d##*/}
+   [[ -r "$d/README.md" ]] || continue
+   IFS= read -r title < "$d/README.md" || true
+   [[ $title =~ ^#\  ]] || title="<untitled>"
+   title="${title#*# }"
+   echo "$dir/$id/README.md $title"
+ done 7< <(find "$dir" -maxdepth 2 -type d -path '*/2*'|sort)
+}
+
 x.find() { x.dex.titles | pcregrep -i "$*"; }
 x.tags.find() { x.dex.tags | pcregrep -i "$*"; }
 
